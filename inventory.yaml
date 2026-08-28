@@ -1,0 +1,59 @@
+devices:
+  - name: Spine-1
+    address: 10.101.113.1
+  - name: Spine-2
+    address: 10.101.113.2
+  - name: Leaf-1
+    address: 10.101.113.3
+  - name: Leaf-2
+    address: 10.101.113.4
+  - name: Leaf-3
+    address: 10.101.113.5
+
+ethernet_segments:
+  - name: ES-1
+    esi: "03:00:00:00:00:11:11:00:00:01"
+    attachments:
+      - device: Leaf-1
+        interface: PortChannel1
+        vtep: 1.1.1.1
+        vlans: [10, 20, 30, 40]
+      - device: Leaf-2
+        interface: PortChannel1
+        vtep: 2.2.2.2
+        vlans: [10, 20, 30, 40]
+
+bgp_links:
+  - {name: Spine-1--Leaf-1, a_device: Spine-1, a_neighbor: Ethernet0, b_device: Leaf-1, b_neighbor: Ethernet72}
+  - {name: Spine-1--Leaf-2, a_device: Spine-1, a_neighbor: Ethernet4, b_device: Leaf-2, b_neighbor: Ethernet72}
+  - {name: Spine-1--Leaf-3, a_device: Spine-1, a_neighbor: Ethernet8, b_device: Leaf-3, b_neighbor: Ethernet76}
+  - {name: Spine-2--Leaf-1, a_device: Spine-2, a_neighbor: Ethernet0, b_device: Leaf-1, b_neighbor: Ethernet76}
+  - {name: Spine-2--Leaf-2, a_device: Spine-2, a_neighbor: Ethernet4, b_device: Leaf-2, b_neighbor: Ethernet76}
+  - {name: Spine-2--Leaf-3, a_device: Spine-2, a_neighbor: Ethernet8, b_device: Leaf-3, b_neighbor: Ethernet72}
+
+vtep_devices:
+  1.1.1.1: Leaf-1
+  2.2.2.2: Leaf-2
+  3.3.3.3: Leaf-3
+
+expected_vnis:
+  - {device: Leaf-1, vtep: 1.1.1.1, vlan: 10, vni: 1010, rd: "1.1.1.1:10"}
+  - {device: Leaf-1, vtep: 1.1.1.1, vlan: 20, vni: 1020, rd: "1.1.1.1:20"}
+  - {device: Leaf-1, vtep: 1.1.1.1, vlan: 30, vni: 1030, rd: "1.1.1.1:30"}
+  - {device: Leaf-1, vtep: 1.1.1.1, vlan: 40, vni: 1040, rd: "1.1.1.1:40"}
+  - {device: Leaf-2, vtep: 2.2.2.2, vlan: 10, vni: 1010, rd: "2.2.2.2:10"}
+  - {device: Leaf-2, vtep: 2.2.2.2, vlan: 20, vni: 1020, rd: "2.2.2.2:20"}
+  - {device: Leaf-2, vtep: 2.2.2.2, vlan: 30, vni: 1030, rd: "2.2.2.2:30"}
+  - {device: Leaf-2, vtep: 2.2.2.2, vlan: 40, vni: 1040, rd: "2.2.2.2:40"}
+  - {device: Leaf-3, vtep: 3.3.3.3, vlan: 10, vni: 1010, rd: "3.3.3.3:10"}
+  - {device: Leaf-3, vtep: 3.3.3.3, vlan: 20, vni: 1020, rd: "3.3.3.3:20"}
+  - {device: Leaf-3, vtep: 3.3.3.3, vlan: 30, vni: 1030, rd: "3.3.3.3:30"}
+  - {device: Leaf-3, vtep: 3.3.3.3, vlan: 40, vni: 1040, rd: "3.3.3.3:40"}
+
+# These paths match the Broadcom SONiC 4.5.1 OpenConfig model. The collector
+# probes them independently, so one unsupported path does not stop a device.
+paths:
+  interfaces: /openconfig-interfaces:interfaces/interface
+  bgp_neighbors: /openconfig-network-instance:network-instances/network-instance[name=default]/protocols/protocol[identifier=BGP][name=bgp]/bgp/neighbors
+  evpn_loc_rib: /openconfig-network-instance:network-instances/network-instance[name=default]/protocols/protocol[identifier=BGP][name=bgp]/bgp/rib/afi-safis/afi-safi[afi-safi-name=L2VPN_EVPN]/openconfig-bgp-evpn-ext:l2vpn-evpn/loc-rib/routes
+  evpn_neighbors: /openconfig-network-instance:network-instances/network-instance[name=default]/protocols/protocol[identifier=BGP][name=bgp]/bgp/rib/afi-safis/afi-safi[afi-safi-name=L2VPN_EVPN]/openconfig-bgp-evpn-ext:l2vpn-evpn/neighbors

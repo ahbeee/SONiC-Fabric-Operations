@@ -1,0 +1,8 @@
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+pygnmi==0.8.15
+python-dotenv==1.1.1
+PyYAML==6.0.2
+pytest==8.4.1
+httpx==0.28.1
+paramiko==4.0.0
