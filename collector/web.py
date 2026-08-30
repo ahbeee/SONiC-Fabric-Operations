@@ -10,7 +10,9 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
 from .analytics import parse_route
-from .inventory import InventoryManager, SecretsManager
+from .config import Device, load_settings
+from .inventory import InventoryManager, SecretsManager, validate_device
+from .platform import collect_platform_inventory
 from .store import Store
 from .topology import discover_lldp_links, merge_fabric_links
 
@@ -30,11 +32,18 @@ def create_app(store: Store, root: Path) -> FastAPI:
 
     def configured_devices() -> list[dict]:
         status_by_name = {row["device"]: row for row in store.rows("SELECT * FROM device_status")}
+        platform_by_name = {row["device"]: row for row in store.rows("SELECT * FROM platform_inventory")}
         result = []
         for item in inventory.read()["devices"]:
             current = status_by_name.get(item["name"], {})
+            platform = platform_by_name.get(item["name"], {})
             result.append({**item, "device": item["name"], "status": current.get("status", "PENDING"),
-                           "last_poll": current.get("last_poll"), "last_error": current.get("last_error")})
+                           "last_poll": current.get("last_poll"), "last_error": current.get("last_error"),
+                           "description": platform.get("description"),
+                           "serial_number": platform.get("serial_number"),
+                           "base_mac": platform.get("base_mac"),
+                           "software_version": platform.get("software_version"),
+                           "inventory_collected_at": platform.get("collected_at")})
         return result
 
     def discovered_hostnames() -> dict[str, str]:
@@ -76,12 +85,26 @@ def create_app(store: Store, root: Path) -> FastAPI:
         require_local(request)
         name = "device-" + payload.address.replace(":", ".")
         try:
-            item = inventory.add_device(name, payload.address, payload.notes)
+            name, address = validate_device(name, payload.address)
+            existing = inventory.read()["devices"]
+            if any(item["name"].lower() == name.lower() or item["address"] == address for item in existing):
+                raise ValueError("A device with this management address already exists.")
+            candidate = Device(name=name, address=address, notes=payload.notes,
+                               username=payload.username, password=payload.password)
+            try:
+                platform = collect_platform_inventory(load_settings(root), candidate)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Credentials or platform telemetry validation failed: {type(exc).__name__}: {exc}",
+                ) from exc
+            item = inventory.add_device(name, address, payload.notes)
             try:
                 secrets.set(item["name"], payload.username, payload.password)
             except Exception:
                 inventory.remove_device(item["name"])
                 raise
+            store.set_platform_inventory(item["name"], platform)
             return item
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc

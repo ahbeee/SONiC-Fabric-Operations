@@ -10,6 +10,7 @@ from .config import Device, Settings
 from .analytics import Analyzer
 from .gnmi import get_dataset, on_change_updates
 from .inventory import InventoryManager, SecretsManager
+from .platform import collect_platform_inventory
 from .store import Store
 
 LOG = logging.getLogger(__name__)
@@ -31,8 +32,10 @@ class Collector:
         self._bgp_poller_names: set[str] = set()
         self._onchange_keys: set[tuple[str, str]] = set()
         self._listener_lock = threading.Lock()
+        self._platform_attempted: set[str] = set()
 
     def poll_device(self, device: Device) -> None:
+        self._collect_platform_once(device)
         successes, errors = 0, []
         for dataset, path in self.settings.paths.items():
             try:
@@ -80,6 +83,20 @@ class Collector:
             )
         else:
             self.store.resolve_incident(fingerprint, "All configured gNMI datasets are reachable again.")
+
+    def _collect_platform_once(self, device: Device) -> None:
+        attempted = getattr(self, "_platform_attempted", None)
+        if attempted is None:
+            attempted = self._platform_attempted = set()
+        if device.name in attempted or self.store.has_platform_inventory(device.name):
+            return
+        attempted.add(device.name)
+        try:
+            inventory = collect_platform_inventory(self.settings, device)
+            self.store.set_platform_inventory(device.name, inventory)
+            LOG.info("%s platform EEPROM inventory collected", device.name)
+        except Exception as exc:
+            LOG.warning("%s platform EEPROM unavailable: %s", device.name, exc)
 
     @staticmethod
     def _tcp_reachable(address: str, port: int, timeout: float = 1.0) -> bool:
@@ -174,6 +191,8 @@ class Collector:
             secrets = self.secrets.read()
             self.settings.devices[:] = [Device(**item, **secrets.get(item["name"], {}))
                                         for item in data["devices"]]
+            active_names = {item.name for item in self.settings.devices}
+            self._platform_attempted.intersection_update(active_names)
             self.settings.paths.clear()
             self.settings.paths.update(data["paths"])
             self.settings.ethernet_segments[:] = data.get("ethernet_segments", [])

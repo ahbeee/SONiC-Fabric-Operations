@@ -40,6 +40,9 @@ class Store:
                     device TEXT NOT NULL, dataset TEXT NOT NULL, point_key TEXT NOT NULL,
                     value_json TEXT NOT NULL, observed_at TEXT NOT NULL, source TEXT NOT NULL,
                     PRIMARY KEY(device, dataset, point_key));
+                CREATE TABLE IF NOT EXISTS platform_inventory (
+                    device TEXT PRIMARY KEY, description TEXT, serial_number TEXT,
+                    base_mac TEXT, software_version TEXT, collected_at TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS event_time_idx ON events(observed_at DESC);
                 CREATE TABLE IF NOT EXISTS incidents (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, fingerprint TEXT NOT NULL UNIQUE,
@@ -126,7 +129,22 @@ class Store:
             db.execute("DELETE FROM current_state WHERE device=?", (device,))
             db.execute("DELETE FROM telemetry_points WHERE device=?", (device,))
             db.execute("DELETE FROM device_status WHERE device=?", (device,))
+            db.execute("DELETE FROM platform_inventory WHERE device=?", (device,))
         self.resolve_incident(f"device-down:{device}", "Device removed from inventory.")
+
+    def set_platform_inventory(self, device: str, inventory: dict[str, Any]) -> None:
+        with self.connect() as db:
+            db.execute(
+                "INSERT INTO platform_inventory(device,description,serial_number,base_mac,software_version,collected_at) "
+                "VALUES(?,?,?,?,?,?) ON CONFLICT(device) DO UPDATE SET description=excluded.description,"
+                "serial_number=excluded.serial_number,base_mac=excluded.base_mac,"
+                "software_version=excluded.software_version,collected_at=excluded.collected_at",
+                (device, inventory.get("description"), inventory.get("serial_number"),
+                 inventory.get("base_mac"), inventory.get("software_version"), self.now()),
+            )
+
+    def has_platform_inventory(self, device: str) -> bool:
+        return bool(self.rows("SELECT 1 FROM platform_inventory WHERE device=?", (device,)))
 
     def rows(self, query: str, args: tuple = ()) -> list[dict[str, Any]]:
         with self.connect() as db:

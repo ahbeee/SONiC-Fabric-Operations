@@ -71,6 +71,10 @@ Use **Manage devices** to enter:
 - Password
 - Optional operator notes
 
+Before saving anything, the service validates the supplied credentials and reads the OpenConfig `System Eeprom` component. A failed login, unreachable gNMI endpoint, or unavailable EEPROM response rejects the operation without adding the device. Description, serial number, base MAC address, and software version are stored as read-only platform inventory and shown in the device workspace. Existing devices missing this inventory are populated once after collector startup.
+
+The device workspace uses a responsive two-level card layout, opens nearly full-screen, and provides a Maximize/Restore control. It does not require horizontal scrolling on smaller windows.
+
 The internal device ID is generated from the management address. The UI does not ask for an operator-defined device name. Fabric topology uses the hostname advertised by the device through BGP telemetry; until a hostname is learned, the management address is shown.
 
 The management address and notes are written atomically to `inventory.yaml`. Per-device credentials are written to the Git-ignored `device-secrets.yaml`; the API never returns them. Devices without a per-device entry use the shared `.env` credentials. Inventory write operations are restricted to localhost because the application does not provide user authentication.
