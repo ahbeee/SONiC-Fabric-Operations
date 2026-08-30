@@ -32,7 +32,7 @@ BMP and this collector observe BGP through fundamentally different interfaces. B
 ## What is better for operations
 
 1. **Works without BMP support.** It uses the management interface already exposed by many SONiC deployments.
-2. **Cross-domain evidence.** BGP, EVPN, interfaces, device reachability, Ethernet Segments, and intended VNI coverage are analyzed together.
+2. **Cross-domain evidence.** BGP, EVPN, LLDP physical topology, interfaces, device reachability, Ethernet Segments, and intended VNI coverage are analyzed together.
 3. **Actionable incidents instead of a raw feed.** Repeated observations are deduplicated and grouped into root causes with severity, confidence, impact, and recovery state.
 4. **Noise suppression.** Route withdrawals caused by a confirmed device or route-reflector outage can be treated as symptoms while independent service failures remain visible.
 5. **Controlled data growth.** Current state is replaced in place, low-value counter churn is filtered, and retained events/incidents have independent lifetimes.

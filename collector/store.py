@@ -244,7 +244,11 @@ def bgp_event_value(value: Any) -> Any:
 
 
 def event_value(dataset: str, value: Any) -> Any:
-    return bgp_event_value(value) if dataset == "bgp_neighbors" else value
+    if dataset == "bgp_neighbors":
+        return bgp_event_value(value)
+    if dataset == "lldp_neighbors":
+        return lldp_event_value(value)
+    return value
 
 
 def meaningful_change(dataset: str, key: str, old: Any, new: Any) -> bool:
@@ -260,7 +264,17 @@ def meaningful_change(dataset: str, key: str, old: Any, new: Any) -> bool:
         if any(token in lowered for token in ("/counters", "/statistics", "last-change")):
             return False
         return interface_event_value(old) != interface_event_value(new)
+    if dataset == "lldp_neighbors":
+        return lldp_event_value(old) != lldp_event_value(new)
     return comparable(old) != comparable(new)
+
+
+def lldp_event_value(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    return {key: value[key] for key in (
+        "system-name", "chassis-id", "port-id", "port-description", "management-address"
+    ) if key in value}
 
 
 def interface_event_value(value: Any) -> Any:

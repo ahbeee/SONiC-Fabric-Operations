@@ -37,6 +37,10 @@ class Collector:
         for dataset, path in self.settings.paths.items():
             try:
                 records = get_dataset(self.settings, device, path)
+                if dataset == "lldp_neighbors":
+                    records = {key: value for key, value in records.items()
+                               if "/neighbors/neighbor[" in key and key.endswith("/state")
+                               and isinstance(value, dict) and value.get("system-name")}
                 stats = self.store.apply_snapshot(device.name, dataset, records)
                 successes += 1
                 LOG.info("%s %-16s %s", device.name, dataset, stats)

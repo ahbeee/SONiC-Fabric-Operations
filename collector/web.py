@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict
 from .analytics import parse_route
 from .inventory import InventoryManager, SecretsManager
 from .store import Store
+from .topology import discover_lldp_links, merge_fabric_links
 
 
 class DeviceCreate(BaseModel):
@@ -122,6 +123,11 @@ def create_app(store: Store, root: Path) -> FastAPI:
                            "DOWN" if any(value and value != "ESTABLISHED" for value in states) else "UNKNOWN")
             links.append({**link, "status": link_status, "a_state": states[0] or "UNKNOWN",
                           "b_state": states[1] or "UNKNOWN"})
+        lldp_rows = store.rows(
+            "SELECT device,route_key,value_json,observed_at FROM current_state WHERE dataset='lldp_neighbors'"
+        )
+        lldp_links = discover_lldp_links(lldp_rows, devices)
+        fabric_links = merge_fabric_links(lldp_links, links)
         points = {(row["device"], row["point_key"]): json.loads(row["value_json"])
                   for row in store.rows("SELECT device,point_key,value_json FROM telemetry_points "
                                         "WHERE dataset='interface_oper_status'")}
@@ -130,7 +136,8 @@ def create_app(store: Store, root: Path) -> FastAPI:
             attachments = [{**item, "oper_status": points.get((item["device"], item["interface"]), "UNKNOWN")}
                            for item in segment.get("attachments", [])]
             segments.append({**segment, "attachments": attachments})
-        return {"nodes": devices, "bgp_links": links, "ethernet_segments": segments,
+        return {"nodes": devices, "fabric_links": fabric_links, "lldp_links": lldp_links,
+                "bgp_links": links, "ethernet_segments": segments,
                 "updated_at": datetime.now(timezone.utc).isoformat()}
 
     @app.get("/api/events")

@@ -17,7 +17,7 @@ The project is not tied to a fixed topology or lab. Devices, OpenConfig paths, B
 
 ## Architecture
 
-The collector polls supported OpenConfig paths independently, stores only the latest state in `current_state`, and records meaningful changes in the event history. A faster BGP neighbor poll supplements the full collection cycle. Interface operational state can use gNMI `STREAM/ON_CHANGE` when the SONiC implementation supports it.
+The collector polls supported OpenConfig paths independently, stores only the latest state in `current_state`, and records meaningful changes in the event history. A faster BGP neighbor poll supplements the full collection cycle. Interface operational state can use gNMI `STREAM/ON_CHANGE` when the SONiC implementation supports it. OpenConfig LLDP neighbor state automatically discovers physical links between managed devices.
 
 The analyzer correlates evidence across devices and datasets. A confirmed device or control-plane outage can suppress derivative route-withdrawal noise, while an independent service-impacting failure remains visible.
 
@@ -80,6 +80,10 @@ Both files can also be edited manually. Use [inventory.yaml.example](inventory.y
 > `device-secrets.yaml` is local plaintext configuration. Protect it with operating-system file permissions or integrate a secret manager before exposing this service in a multi-user production environment.
 
 ## Topology configuration
+
+Physical fabric links are discovered automatically from `lldp_neighbors`. The collector maps LLDP neighbor system names to hostnames learned from managed-device telemetry, accepts either FQDN or short-name matches, combines observations from both ends, and removes duplicate links. Only current neighbor state is retained; LLDP age and counter churn does not create historical events.
+
+When a configured BGP adjacency connects the same device pair, its session health is overlaid on the LLDP physical link. This lets the UI show a physically discovered connection in red when its BGP control plane is down.
 
 Optional `bgp_links` entries correlate the two observed sides of each adjacency. A link is marked UP only when both ends report `ESTABLISHED`; incomplete evidence is shown as UNKNOWN.
 
