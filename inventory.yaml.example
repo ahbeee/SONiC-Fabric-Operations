@@ -14,6 +14,7 @@ expected_vnis: []
 
 # Adapt these OpenConfig paths when a SONiC release exposes a different model.
 paths:
+  system_hostname: /openconfig-system:system/state/hostname
   interfaces: /openconfig-interfaces:interfaces/interface
   lldp_neighbors: /openconfig-lldp:lldp/interfaces/interface
   bgp_neighbors: /openconfig-network-instance:network-instances/network-instance[name=default]/protocols/protocol[identifier=BGP][name=bgp]/bgp/neighbors

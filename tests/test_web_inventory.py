@@ -22,6 +22,9 @@ def test_device_api_never_exposes_credentials_and_topology_reports_link(tmp_path
         "base_mac": "00:11:22:33:44:55", "software_version": "4.6.0",
     })
     store.set_status("Spine-1", "10.0.0.1", "UP")
+    store.apply_snapshot("Spine-1", "system_hostname", {
+        "/openconfig-system:system/state/hostname": {"openconfig-system:hostname": "fabric-spine-01"}
+    })
     store.apply_snapshot("Spine-1", "bgp_neighbors", {"peer": {
         "neighbor-address": "Ethernet0",
         "state": {"session-state": "ESTABLISHED",
@@ -31,6 +34,7 @@ def test_device_api_never_exposes_credentials_and_topology_reports_link(tmp_path
 
     devices = app.get("/api/config/devices").json()
     assert devices[0]["status"] == "UP"
+    assert devices[0]["hostname"] == "fabric-spine-01"
     assert "password" not in str(devices).lower()
     response = app.post("/api/config/devices", json={"notes": "Rack B", "address": "10.0.0.3",
                                                       "username": "admin", "password": "secret"})

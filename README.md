@@ -7,7 +7,7 @@ The project is not tied to a fixed topology or lab. Devices, OpenConfig paths, B
 ## What it provides
 
 - A live device and fabric health dashboard.
-- A topology view labeled with hostnames learned from device telemetry and optional operator notes.
+- A topology view labeled with local hostnames learned from OpenConfig system telemetry and optional operator notes.
 - Per-device gNMI credentials that are never returned by the API or displayed after submission.
 - Current EVPN Loc-RIB state and searchable Type-1 through Type-5 routes.
 - Snapshot-derived announce, update, and withdrawal events.
@@ -75,7 +75,7 @@ Before saving anything, the service validates the supplied credentials and reads
 
 The device workspace uses a responsive two-level card layout, opens nearly full-screen, and provides a Maximize/Restore control. It does not require horizontal scrolling on smaller windows.
 
-The internal device ID is generated from the management address. The UI does not ask for an operator-defined device name. Fabric topology uses the hostname advertised by the device through BGP telemetry; until a hostname is learned, the management address is shown.
+The internal device ID is generated from the management address. The UI does not ask for an operator-defined device name. Device cards, route and event views, and fabric topology use the local hostname from `/openconfig-system:system/state/hostname`; until it is learned, the management address is shown. The stable internal ID remains in the database and API filters so hostname changes do not disconnect historical data.
 
 The management address and notes are written atomically to `inventory.yaml`. Per-device credentials are written to the Git-ignored `device-secrets.yaml`; the API never returns them. Devices without a per-device entry use the shared `.env` credentials. Inventory write operations are restricted to localhost because the application does not provide user authentication.
 

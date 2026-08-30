@@ -30,31 +30,45 @@ def create_app(store: Store, root: Path) -> FastAPI:
     inventory = InventoryManager(root / "inventory.yaml")
     secrets = SecretsManager(root / "device-secrets.yaml")
 
+    def discovered_hostnames() -> dict[str, str]:
+        """Return local hostnames learned from OpenConfig system telemetry."""
+        result = {}
+        rows = store.rows("SELECT device,value_json FROM current_state WHERE dataset='system_hostname'")
+        for row in rows:
+            value = json.loads(row["value_json"])
+            hostname = (value if isinstance(value, str) else
+                        value.get("openconfig-system:hostname") or value.get("hostname")
+                        if isinstance(value, dict) else None)
+            if hostname:
+                result[row["device"]] = str(hostname)
+        return result
+
+    def device_metadata() -> dict[str, dict]:
+        hostnames = discovered_hostnames()
+        if not inventory.path.exists():
+            return {row["device"]: {"hostname": hostnames.get(row["device"], row["device"]),
+                                     "notes": "", "address": row.get("address", "")}
+                    for row in store.rows("SELECT device,address FROM device_status")}
+        return {item["name"]: {"hostname": hostnames.get(item["name"], item["address"]),
+                                "notes": item.get("notes", ""), "address": item["address"]}
+                for item in inventory.read()["devices"]}
+
     def configured_devices() -> list[dict]:
         status_by_name = {row["device"]: row for row in store.rows("SELECT * FROM device_status")}
         platform_by_name = {row["device"]: row for row in store.rows("SELECT * FROM platform_inventory")}
+        metadata = device_metadata()
         result = []
         for item in inventory.read()["devices"]:
             current = status_by_name.get(item["name"], {})
             platform = platform_by_name.get(item["name"], {})
-            result.append({**item, "device": item["name"], "status": current.get("status", "PENDING"),
+            result.append({**item, "device": item["name"], "hostname": metadata[item["name"]]["hostname"],
+                           "status": current.get("status", "PENDING"),
                            "last_poll": current.get("last_poll"), "last_error": current.get("last_error"),
                            "description": platform.get("description"),
                            "serial_number": platform.get("serial_number"),
                            "base_mac": platform.get("base_mac"),
                            "software_version": platform.get("software_version"),
                            "inventory_collected_at": platform.get("collected_at")})
-        return result
-
-    def discovered_hostnames() -> dict[str, str]:
-        """Learn each local hostname from the BGP hostname capability in telemetry."""
-        result = {}
-        rows = store.rows("SELECT device,value_json FROM current_state WHERE dataset='bgp_neighbors'")
-        for row in rows:
-            value = json.loads(row["value_json"])
-            hostname = value.get("state", {}).get("host-name-cap", {}).get("hostname-advertised")
-            if hostname:
-                result[row["device"]] = str(hostname)
         return result
 
     def require_local(request: Request) -> None:
@@ -169,8 +183,10 @@ def create_app(store: Store, root: Path) -> FastAPI:
             rows = store.rows("SELECT * FROM events WHERE event_type=? ORDER BY id DESC LIMIT ?", (event_type, limit))
         else:
             rows = store.rows("SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,))
+        metadata = device_metadata()
         for row in rows:
             row["value"] = json.loads(row.pop("value_json")) if row.get("value_json") else None
+            row["hostname"] = metadata.get(row["device"], {}).get("hostname", row["device"])
         return rows
 
     @app.get("/api/routes")
@@ -247,12 +263,17 @@ def create_app(store: Store, root: Path) -> FastAPI:
             (device, device, f"%{search}%", f"%{search}%", limit),
         )
         result = []
+        metadata = device_metadata()
         for row in rows:
             value = json.loads(row.pop("value_json"))
             route = parse_route(value)
             if route_type is not None and route.route_type != route_type:
                 continue
-            result.append({**row, "route_type": route.route_type, "prefix": route.prefix,
+            display = metadata.get(row["device"], {})
+            result.append({**row, "device_id": row["device"],
+                           "hostname": display.get("hostname", row["device"]),
+                           "device_notes": display.get("notes", ""),
+                           "route_type": route.route_type, "prefix": route.prefix,
                            "rd": route.rd, "vtep": route.next_hop, "mac": route.mac})
         return result
 
