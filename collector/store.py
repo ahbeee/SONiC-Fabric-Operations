@@ -120,6 +120,14 @@ class Store:
                 (device, dataset, point_key, json.dumps(value, sort_keys=True), self.now(), source),
             )
 
+    def remove_device_state(self, device: str) -> None:
+        """Forget live state for a removed device while preserving audit history."""
+        with self.lock, self.connect() as db:
+            db.execute("DELETE FROM current_state WHERE device=?", (device,))
+            db.execute("DELETE FROM telemetry_points WHERE device=?", (device,))
+            db.execute("DELETE FROM device_status WHERE device=?", (device,))
+        self.resolve_incident(f"device-down:{device}", "Device removed from inventory.")
+
     def rows(self, query: str, args: tuple = ()) -> list[dict[str, Any]]:
         with self.connect() as db:
             return [dict(row) for row in db.execute(query, args).fetchall()]

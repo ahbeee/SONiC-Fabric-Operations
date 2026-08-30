@@ -16,8 +16,8 @@ def get_dataset(settings: Settings, device: Device, path: str) -> dict[str, Any]
     target = (device.address, settings.port)
     with gNMIclient(
         target=target,
-        username=settings.username,
-        password=settings.password,
+        username=device.username or settings.username,
+        password=device.password or settings.password,
         insecure=False,
         skip_verify=settings.skip_verify,
         timeout=settings.timeout,
@@ -28,8 +28,8 @@ def get_dataset(settings: Settings, device: Device, path: str) -> dict[str, Any]
 
 def capabilities(settings: Settings, device: Device) -> dict[str, Any]:
     with gNMIclient(
-        target=(device.address, settings.port), username=settings.username,
-        password=settings.password, insecure=False, skip_verify=settings.skip_verify,
+        target=(device.address, settings.port), username=device.username or settings.username,
+        password=device.password or settings.password, insecure=False, skip_verify=settings.skip_verify,
         timeout=settings.timeout,
     ) as client:
         return client.capabilities()
@@ -45,8 +45,8 @@ def probe_on_change(settings: Settings, device: Device, path: str,
     subscriber object.
     """
     with gNMIclient(
-        target=(device.address, settings.port), username=settings.username,
-        password=settings.password, insecure=False, skip_verify=settings.skip_verify,
+        target=(device.address, settings.port), username=device.username or settings.username,
+        password=device.password or settings.password, insecure=False, skip_verify=settings.skip_verify,
         timeout=settings.timeout,
     ) as client:
         subscriber = client.subscribe2(subscribe={
@@ -69,8 +69,8 @@ def probe_on_change(settings: Settings, device: Device, path: str,
 def on_change_updates(settings: Settings, device: Device, path: str):
     """Yield parsed updates from a long-lived STREAM/ON_CHANGE subscription."""
     with gNMIclient(
-        target=(device.address, settings.port), username=settings.username,
-        password=settings.password, insecure=False, skip_verify=settings.skip_verify,
+        target=(device.address, settings.port), username=device.username or settings.username,
+        password=device.password or settings.password, insecure=False, skip_verify=settings.skip_verify,
         timeout=settings.timeout,
     ) as client:
         subscriber = client.subscribe2(subscribe={

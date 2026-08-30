@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from .config import Device, Settings
 from .analytics import Analyzer
 from .gnmi import get_dataset, on_change_updates
+from .inventory import InventoryManager, SecretsManager
 from .store import Store
 
 LOG = logging.getLogger(__name__)
@@ -23,6 +24,13 @@ class Collector:
                                  bgp_links=settings.bgp_links, vtep_devices=settings.vtep_devices)
         self.analyzer.expected_vnis = settings.expected_vnis
         self.last_maintenance = 0.0
+        self.inventory = InventoryManager(settings.inventory_path)
+        self.inventory_mtime = settings.inventory_path.stat().st_mtime_ns
+        self.secrets = SecretsManager(settings.inventory_path.parent / "device-secrets.yaml")
+        self.secrets_mtime = self.secrets.path.stat().st_mtime_ns if self.secrets.path.exists() else 0
+        self._bgp_poller_names: set[str] = set()
+        self._onchange_keys: set[tuple[str, str]] = set()
+        self._listener_lock = threading.Lock()
 
     def poll_device(self, device: Device) -> None:
         successes, errors = 0, []
@@ -78,8 +86,13 @@ class Collector:
             return False
 
     def poll_once(self) -> None:
-        with ThreadPoolExecutor(max_workers=len(self.settings.devices)) as executor:
-            futures = [executor.submit(self.poll_device, device) for device in self.settings.devices]
+        self._reload_inventory_if_changed()
+        devices = list(self.settings.devices)
+        if not devices:
+            LOG.warning("Inventory contains no devices; collection skipped")
+            return
+        with ThreadPoolExecutor(max_workers=len(devices)) as executor:
+            futures = [executor.submit(self.poll_device, device) for device in devices]
             for future in as_completed(futures):
                 future.result()
         analyzed = self.analyzer.run()
@@ -103,12 +116,20 @@ class Collector:
         """BGP ON_CHANGE is disabled by this SONiC release; poll only the
         relatively small neighbor state at a faster cadence than full RIBs."""
         for device in self.settings.devices:
+            with self._listener_lock:
+                if device.name in self._bgp_poller_names:
+                    continue
+                self._bgp_poller_names.add(device.name)
             threading.Thread(target=self._watch_bgp, args=(device,),
                              name=f"bgp-fast-{device.name}", daemon=True).start()
 
     def _watch_bgp(self, device: Device) -> None:
         path = self.settings.paths["bgp_neighbors"]
         while not self.stop_event.is_set():
+            if device.name not in {item.name for item in self.settings.devices}:
+                with self._listener_lock:
+                    self._bgp_poller_names.discard(device.name)
+                return
             try:
                 records = get_dataset(self.settings, device, path)
                 stats = self.store.apply_snapshot(device.name, "bgp_neighbors", records)
@@ -121,13 +142,17 @@ class Collector:
     def _start_on_change_listeners(self) -> None:
         """Use ON_CHANGE only for paths verified on this SONiC release."""
         devices = {device.name: device for device in self.settings.devices}
-        seen: set[tuple[str, str]] = set()
         for segment in self.settings.ethernet_segments:
             for attachment in segment.get("attachments", []):
                 key = (attachment["device"], attachment["interface"])
-                if key in seen or attachment["device"] not in devices:
+                if attachment["device"] not in devices:
                     continue
-                seen.add(key)
+                with self._listener_lock:
+                    already_started = key in self._onchange_keys
+                    if not already_started:
+                        self._onchange_keys.add(key)
+                if already_started:
+                    continue
                 thread = threading.Thread(
                     target=self._watch_interface,
                     args=(devices[attachment["device"]], attachment["interface"]),
@@ -135,9 +160,42 @@ class Collector:
                 )
                 thread.start()
 
+    def _reload_inventory_if_changed(self) -> None:
+        try:
+            mtime = self.settings.inventory_path.stat().st_mtime_ns
+            secrets_mtime = self.secrets.path.stat().st_mtime_ns if self.secrets.path.exists() else 0
+            if mtime == self.inventory_mtime and secrets_mtime == self.secrets_mtime:
+                return
+            data = self.inventory.read()
+            secrets = self.secrets.read()
+            self.settings.devices[:] = [Device(**item, **secrets.get(item["name"], {}))
+                                        for item in data["devices"]]
+            self.settings.paths.clear()
+            self.settings.paths.update(data["paths"])
+            self.settings.ethernet_segments[:] = data.get("ethernet_segments", [])
+            self.settings.bgp_links[:] = data.get("bgp_links", [])
+            self.settings.expected_vnis[:] = data.get("expected_vnis", [])
+            self.settings.vtep_devices.clear()
+            self.settings.vtep_devices.update({str(k): v for k, v in data.get("vtep_devices", {}).items()})
+            self.analyzer.ethernet_segments = self.settings.ethernet_segments
+            self.analyzer.bgp_links = self.settings.bgp_links
+            self.analyzer.expected_vnis = self.settings.expected_vnis
+            self.analyzer.vtep_devices = self.settings.vtep_devices
+            self.inventory_mtime = mtime
+            self.secrets_mtime = secrets_mtime
+            self._start_bgp_fast_pollers()
+            self._start_on_change_listeners()
+            LOG.info("Reloaded inventory.yaml: %d device(s)", len(self.settings.devices))
+        except Exception as exc:
+            LOG.error("Inventory reload rejected; keeping last valid configuration: %s", exc)
+
     def _watch_interface(self, device: Device, interface: str) -> None:
         path = self.settings.paths["interfaces"] + f"[name={interface}]/state/oper-status"
         while not self.stop_event.is_set():
+            if device.name not in {item.name for item in self.settings.devices}:
+                with self._listener_lock:
+                    self._onchange_keys.discard((device.name, interface))
+                return
             try:
                 LOG.info("%s %s starting ON_CHANGE subscription", device.name, interface)
                 for update in on_change_updates(self.settings, device, path):

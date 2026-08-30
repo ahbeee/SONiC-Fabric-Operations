@@ -1,56 +1,129 @@
-# SONiC gNMI EVPN Collector
+# SONiC Fabric Operations
 
-這是一個 LAB 用的 BMP 替代工具。它以 gNMI 讀取 Broadcom SONiC 的 BGP neighbor、EVPN Loc-RIB 與 per-neighbor EVPN RIB，將目前狀態保存到 SQLite，並由相鄰快照推導 `ANNOUNCE`、`UPDATE`、`WITHDRAW` 事件。
+SONiC Fabric Operations is a deployable gNMI-based monitoring and incident-correlation service for SONiC fabrics. It monitors BGP neighbor state, EVPN RIB state, Ethernet Segment attachments, VTEPs, VNIs, and device availability without requiring BMP support on the switch.
 
-首頁優先呈現分析後的 incident，而非原始資料：VTEP mass withdrawal、Type-2 MAC mobility/flapping，以及 Type-4 ESI membership withdrawal。每個 incident 都包含 severity、confidence、影響範圍與判斷證據。
+The project is not tied to a fixed topology or lab. Devices, OpenConfig paths, BGP links, Ethernet Segments, VTEPs, and expected VNIs are supplied at deployment time through local configuration.
 
-BGP neighbor 的 `last-established` 回到較小值或 `established-transitions` 增加時，會建立 `BGP_SESSION_RESET`；即使 reset 在兩次 polling 間完成，也能利用 timer/counter 證據辨識，並關聯同一輪的 EVPN withdrawals。
+## What it provides
 
-根因有優先順序：若 Spine/RR 本身確認不可達，同一時間發生的 VTEP/ESI route withdrawals 會視為控制平面路徑消失的症狀並抑制，避免告警風暴。
-Spine 恢復後仍保留 300 秒的 Graceful Restart correlation window，避免 stale route timer 到期時誤判成新的 VTEP failure。
+- A live device and fabric health dashboard.
+- A topology view labeled with hostnames learned from device telemetry and optional operator notes.
+- Per-device gNMI credentials that are never returned by the API or displayed after submission.
+- Current EVPN Loc-RIB state and searchable Type-1 through Type-5 routes.
+- Snapshot-derived announce, update, and withdrawal events.
+- Correlated incidents for device loss, telemetry loss, BGP resets, adjacency loss, fabric isolation, VTEP mass withdrawal, Type-2 MAC mobility/flapping, Type-4 ESI membership loss, multihoming degradation, and VNI coverage loss.
+- Root-cause suppression and recovery-aware incident lifecycle handling.
+- Bounded event and resolved-incident retention with SQLite WAL maintenance.
 
-`inventory.yaml` 可定義 EVPN Ethernet Segment、ESI 與各 Leaf 的 PortChannel attachment。分析器會直接交叉驗證介面 operational state：單側 down 為 `ESI_DEGRADED`，所有 attachment down 才是 `ESI_DOWN`。
+## Architecture
 
-## 能力與限制
+The collector polls supported OpenConfig paths independently, stores only the latest state in `current_state`, and records meaningful changes in the event history. A faster BGP neighbor poll supplements the full collection cycle. Interface operational state can use gNMI `STREAM/ON_CHANGE` when the SONiC implementation supports it.
 
-- 顯示五台設備的可達狀態與 gNMI 錯誤。
-- 保存目前 RIB 和歷史事件，支援 MAC、VTEP、ESI、RD、prefix 搜尋。
-- 每個 gNMI path 獨立探測；某一條路徑不支援不會中止整台設備。
-- 預設每 10 秒輪詢，因此事件時間精度為輪詢週期，且在同一週期內出現又消失的 route 不會被看見。
-- gNMI 是 RIB state telemetry，不是 BMP UPDATE message feed；本工具推導的事件不能宣稱為逐封包、無遺漏的 BGP 歷史。
-- 某些版本在每次 GET 都會改寫 `last-modified`；分析器刻意忽略這個欄位，避免產生假的 route UPDATE。
-- 同一 incident 在 DOWN -> DEGRADED 的恢復階段會保留 peak severity 與原始 root cause，直到完全恢復才 resolve。
-- BGP uptime/message counters、interface counters、IPv6 RA counters 與無語意的 VLAN list ordering 不會產生歷史事件；current state 仍會更新。
-- Retention maintenance 預設每 6 小時執行，events 保留 14 天、resolved incidents 保留 180 天，並執行 WAL checkpoint。
-- Broadcom SONiC 僅對部分 path 支援 `ON_CHANGE`。本版先採可靠的 GET snapshot diff；確認 EVPN path 的 subscription capability 後可再切換成串流。
-- LAB 實測具體介面的 `state/oper-status` 支援 `STREAM/ON_CHANGE`，ES attachment 因此會即時觸發分析；BGP state/counter 與 EVPN RIB 明確回覆 `on change disabled`，仍使用 polling。
+The analyzer correlates evidence across devices and datasets. A confirmed device or control-plane outage can suppress derivative route-withdrawal noise, while an independent service-impacting failure remains visible.
 
-## 安裝與執行（PowerShell）
+This is not a packet-complete BGP update archive. gNMI snapshots can miss a route that appears and disappears between polls. See [BMP_COMPARISON.md](BMP_COMPARISON.md) for the complete capability comparison.
+
+## Requirements
+
+- Python 3.11 or newer
+- Network reachability to each SONiC gNMI endpoint
+- A SONiC image exposing the required OpenConfig paths
+
+## Installation
 
 ```powershell
-cd C:\Users\yeile\Documents\codex\NOS_info\sonic-gnmi-collector
+git clone https://github.com/ahbeee/SONiC-Fabric-Operations.git
+cd SONiC-Fabric-Operations
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python -m collector.main capabilities
-python -m collector.main probe-on-change --device Leaf-1
-python -m collector.main poll-once
+Copy-Item .env.example .env
+Copy-Item inventory.yaml.example inventory.yaml
+```
+
+Set the shared fallback credentials and runtime options in `.env`. Both `.env` and `inventory.yaml` are excluded from Git.
+
+```dotenv
+GNMI_USERNAME=admin
+GNMI_PASSWORD=replace-me
+GNMI_PORT=8080
+GNMI_SKIP_VERIFY=true
+POLL_INTERVAL=10
+BGP_FAST_POLL_INTERVAL=2
+WEB_HOST=127.0.0.1
+WEB_PORT=8000
+```
+
+Start the service:
+
+```powershell
 python -m collector.main run
 ```
 
-開啟 <http://127.0.0.1:8000>。API 文件位於 <http://127.0.0.1:8000/docs>。
+Open <http://127.0.0.1:8000>. Interactive API documentation is available at <http://127.0.0.1:8000/docs>.
 
-帳密位於被 `.gitignore` 排除的 `.env`。可提交的範本是 `.env.example`。
+## Device management and credentials
 
-## 若設備回報 path 不存在
+Use **Manage devices** to enter:
 
-不同版本可能使用不同的 network-instance、protocol name 或 AFI/SAFI identity。修改 `inventory.yaml` 中的 path 即可，不需要改程式。先用 `capabilities` 確認 model，再以單次 `poll-once` 檢視每條 path 的錯誤。
+- Management IPv4 or IPv6 address
+- Username
+- Password
+- Optional operator notes
 
-Broadcom SONiC 4.5.1 文件所定義的 EVPN root：
+The internal device ID is generated from the management address. The UI does not ask for an operator-defined device name. Fabric topology uses the hostname advertised by the device through BGP telemetry; until a hostname is learned, the management address is shown.
 
-```text
-/openconfig-network-instance:network-instances/network-instance[name=default]
- /protocols/protocol[identifier=BGP][name=bgp]/bgp/rib/afi-safis
- /afi-safi[afi-safi-name=L2VPN_EVPN]
- /openconfig-bgp-evpn-ext:l2vpn-evpn
+The management address and notes are written atomically to `inventory.yaml`. Per-device credentials are written to the Git-ignored `device-secrets.yaml`; the API never returns them. Devices without a per-device entry use the shared `.env` credentials. Inventory write operations are restricted to localhost because the application does not provide user authentication.
+
+Both files can also be edited manually. Use [inventory.yaml.example](inventory.yaml.example) and [device-secrets.yaml.example](device-secrets.yaml.example) as templates. The running collector hot-reloads valid changes and keeps its last valid configuration if a file is temporarily invalid.
+
+> `device-secrets.yaml` is local plaintext configuration. Protect it with operating-system file permissions or integrate a secret manager before exposing this service in a multi-user production environment.
+
+## Topology configuration
+
+Optional `bgp_links` entries correlate the two observed sides of each adjacency. A link is marked UP only when both ends report `ESTABLISHED`; incomplete evidence is shown as UNKNOWN.
+
+Optional `ethernet_segments` entries associate an ESI with its device/interface attachments. This enables immediate multihoming degradation and outage analysis when interface `ON_CHANGE` is supported.
+
+Optional `vtep_devices` and `expected_vnis` entries enable VTEP ownership and VNI coverage correlation. See [inventory.yaml.example](inventory.yaml.example) for the schema and adapt it to the target fabric.
+
+## SONiC model compatibility
+
+OpenConfig coverage differs by SONiC release. Each configured path is probed independently, so one unsupported dataset degrades a device rather than stopping all collection. Edit the `paths` section in `inventory.yaml` when a release uses different network-instance, protocol, or AFI/SAFI identifiers.
+
+Useful diagnostics:
+
+```powershell
+python -m collector.main capabilities
+python -m collector.main poll-once
+python -m collector.main probe-on-change --device <internal-device-id>
 ```
+
+Broadcom SONiC releases tested during development accepted interface operational-state `ON_CHANGE` but rejected `ON_CHANGE` for BGP and EVPN RIB paths. Those datasets therefore use polling unless the target release proves otherwise.
+
+## Data retention
+
+- `current_state` and telemetry points are replacements, not unbounded history.
+- Meaningful events are retained for 14 days by default.
+- Resolved incidents are retained for 180 days by default.
+- Maintenance runs every six hours and checkpoints the SQLite WAL.
+
+Adjust `EVENT_RETENTION_DAYS`, `INCIDENT_RETENTION_DAYS`, and `MAINTENANCE_INTERVAL_HOURS` in `.env` for the deployment size and compliance requirements.
+
+## Validation
+
+Run the automated test suite:
+
+```powershell
+python -m pytest -q
+```
+
+Operational fault-injection scenarios and acceptance criteria are documented in [VALIDATION.md](VALIDATION.md).
+
+## Security and deployment notes
+
+- The default web listener is localhost only.
+- TLS certificate verification is configurable; `GNMI_SKIP_VERIFY=true` is intended for controlled environments.
+- There is no built-in UI authentication or role-based access control.
+- Use a reverse proxy with TLS and authentication before exposing the UI remotely.
+- Back up configuration and the SQLite database according to local operational requirements.

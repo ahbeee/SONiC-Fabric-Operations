@@ -1,4 +1,8 @@
 .env
+inventory.yaml
+inventory.yaml.tmp
+device-secrets.yaml
+device-secrets.yaml.tmp
 .venv/
 .venv311/
 .pytest_cache/

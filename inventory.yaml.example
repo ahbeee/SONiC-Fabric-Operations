@@ -1,0 +1,20 @@
+# Copy this file to inventory.yaml. Devices may be added later through the UI.
+devices: []
+
+# Optional Ethernet Segment definitions used for multihoming correlation.
+ethernet_segments: []
+
+# Optional point-to-point BGP topology. Device values use the internal IDs
+# stored in inventory.yaml after a device is added (for example device-10.0.0.11).
+bgp_links: []
+
+# Optional mappings used by EVPN/VTEP and VNI coverage analysis.
+vtep_devices: {}
+expected_vnis: []
+
+# Adapt these OpenConfig paths when a SONiC release exposes a different model.
+paths:
+  interfaces: /openconfig-interfaces:interfaces/interface
+  bgp_neighbors: /openconfig-network-instance:network-instances/network-instance[name=default]/protocols/protocol[identifier=BGP][name=bgp]/bgp/neighbors
+  evpn_loc_rib: /openconfig-network-instance:network-instances/network-instance[name=default]/protocols/protocol[identifier=BGP][name=bgp]/bgp/rib/afi-safis/afi-safi[afi-safi-name=L2VPN_EVPN]/openconfig-bgp-evpn-ext:l2vpn-evpn/loc-rib/routes
+  evpn_neighbors: /openconfig-network-instance:network-instances/network-instance[name=default]/protocols/protocol[identifier=BGP][name=bgp]/bgp/rib/afi-safis/afi-safi[afi-safi-name=L2VPN_EVPN]/openconfig-bgp-evpn-ext:l2vpn-evpn/neighbors

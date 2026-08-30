@@ -4,18 +4,23 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-import yaml
 from dotenv import load_dotenv
+
+from .inventory import InventoryManager, SecretsManager
 
 
 @dataclass(frozen=True)
 class Device:
     name: str
     address: str
+    notes: str = ""
+    username: str | None = None
+    password: str | None = None
 
 
 @dataclass(frozen=True)
 class Settings:
+    inventory_path: Path
     devices: list[Device]
     paths: dict[str, str]
     username: str
@@ -39,10 +44,13 @@ class Settings:
 
 def load_settings(root: Path) -> Settings:
     load_dotenv(root / ".env")
-    with (root / "inventory.yaml").open(encoding="utf-8") as handle:
-        inventory = yaml.safe_load(handle)
+    inventory_path = root / "inventory.yaml"
+    inventory = InventoryManager(inventory_path).read()
+    secrets = SecretsManager(root / "device-secrets.yaml").read()
+    devices = [Device(**item, **secrets.get(item["name"], {})) for item in inventory["devices"]]
     return Settings(
-        devices=[Device(**item) for item in inventory["devices"]],
+        inventory_path=inventory_path,
+        devices=devices,
         paths=inventory["paths"],
         username=os.getenv("GNMI_USERNAME", "admin"),
         password=os.environ["GNMI_PASSWORD"],
